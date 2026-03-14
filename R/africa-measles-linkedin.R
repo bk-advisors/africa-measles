@@ -7,9 +7,8 @@
 #   1. africa-measles-heatmap.png      — 4:5 portrait (best for image posts)
 #   2. africa-measles-heatmap-wide.png — 1.91:1 landscape (best for link shares)
 #
-# Usage:
-#   Open chart-reengineering.Rproj in RStudio, then:
-#   source("linkedin/africa-measles-linkedin.R")
+# Usage (from project root):
+#   Rscript R/africa-measles-linkedin.R
 #
 # Data source: WHO Global Health Observatory (cases) + World Bank (population)
 # =============================================================================
