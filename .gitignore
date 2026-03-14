@@ -11,5 +11,10 @@ search.json
 site_libs/
 CLAUDE.html
 
+# Project docs (private — not for public repo)
+CLAUDE.md
+WORKFLOW.md
+principles/
+
 # Cached API data (re-fetch with R/fetch_validation_data.R)
 data/validation_cache.rds
