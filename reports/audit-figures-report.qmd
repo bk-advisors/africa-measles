@@ -1,0 +1,217 @@
+---
+title: "LinkedIn Post — Figure Audit"
+subtitle: "Verifying every claim in the narrative against the source data"
+date: today
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    output-file: audit-figures-report.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+library(dplyr)
+library(scales)
+library(ggplot2)
+```
+
+## The LinkedIn post
+
+> In 1981, measles infected **1.4 million** people across Africa in a single year.
+>
+> By 2016, that number was **35,000**. A **97% drop**.
+>
+> What happened? The WHO/UNICEF Measles Initiative launched mass immunization campaigns starting in 2001. Countries that used to see thousands of cases per million people — **Malawi, Zambia, Niger, Kenya** — saw their numbers collapse within a few years.
+>
+> It's one of the most dramatic public health achievements of the last half century. But it's hard to appreciate something you can no longer see.
+
+This report checks each bolded claim against `africa_measles.csv`.
+
+```{r load}
+df <- read.csv("../data/africa_measles.csv")
+
+yearly <- df %>%
+  group_by(year) %>%
+  summarise(total_cases = sum(cases, na.rm = TRUE), .groups = "drop")
+
+peak <- yearly %>% slice_max(total_cases, n = 1)
+low  <- yearly %>% slice_min(total_cases, n = 1)
+pct_drop <- round((1 - low$total_cases / peak$total_cases) * 100, 1)
+```
+
+## 1. "1.4 million cases in 1981"
+
+```{r claim-1981}
+val_1981 <- yearly$total_cases[yearly$year == 1981]
+cat("1981 total cases:", comma(val_1981), "\n")
+cat("Rounded:", round(val_1981 / 1e6, 1), "million\n")
+```
+
+```{r verdict-1981, results='asis'}
+if (val_1981 >= 1.35e6 & val_1981 < 1.45e6) {
+  cat("::: {.callout-tip}\n## PASS\n",
+      comma(val_1981), "rounds to 1.4 million.\n:::\n")
+} else {
+  cat("::: {.callout-warning}\n## CHECK\nActual value is",
+      comma(val_1981), "— does not round to 1.4 million.\n:::\n")
+}
+```
+
+## 2. "35,000 in 2016"
+
+```{r claim-2016}
+val_2016 <- yearly$total_cases[yearly$year == 2016]
+cat("2016 total cases:", comma(val_2016), "\n")
+```
+
+```{r verdict-2016, results='asis'}
+if (val_2016 >= 34500 & val_2016 < 35500) {
+  cat("::: {.callout-tip}\n## PASS\n",
+      comma(val_2016), "rounds to 35,000.\n:::\n")
+} else {
+  cat("::: {.callout-warning}\n## CHECK\nActual value is",
+      comma(val_2016), "— review rounding.\n:::\n")
+}
+```
+
+## 3. "A 97% drop"
+
+```{r claim-97}
+cat("Peak:", peak$year, "—", comma(peak$total_cases), "cases\n")
+cat("Low: ", low$year, "—", comma(low$total_cases), "cases\n")
+cat("Reduction:", pct_drop, "%\n")
+```
+
+```{r verdict-97, results='asis'}
+if (pct_drop >= 96.5 & pct_drop < 97.5) {
+  cat("::: {.callout-tip}\n## PASS\n",
+      pct_drop, "% rounds to 97%.\n:::\n")
+} else {
+  cat("::: {.callout-warning}\n## CHECK\nActual reduction is",
+      pct_drop, "% — review claim.\n:::\n")
+}
+```
+
+## 4. Chart title: "cut cases by over 90%"
+
+The chart title compares average cases per million pre- vs post-2001.
+
+```{r claim-90}
+pre <- df %>%
+  filter(year < 2001) %>%
+  summarise(avg = mean(cases_per_million, na.rm = TRUE))
+
+post <- df %>%
+  filter(year >= 2001) %>%
+  summarise(avg = mean(cases_per_million, na.rm = TRUE))
+
+reduction <- round((1 - post$avg / pre$avg) * 100, 1)
+
+cat("Avg cases/million pre-2001: ", round(pre$avg, 1), "\n")
+cat("Avg cases/million post-2001:", round(post$avg, 1), "\n")
+cat("Reduction:", reduction, "%\n")
+```
+
+```{r verdict-90, results='asis'}
+if (reduction > 90) {
+  cat("::: {.callout-tip}\n## PASS\n",
+      reduction, "% exceeds 90%.\n:::\n")
+} else {
+  cat("::: {.callout-warning}\n## CHECK\nReduction is",
+      reduction, "% — does not exceed 90%.\n:::\n")
+}
+```
+
+## 5. "Malawi, Zambia, Niger, Kenya — thousands per million"
+
+```{r claim-countries}
+named <- c("Malawi", "Zambia", "Niger", "Kenya")
+
+country_rates <- df %>%
+  filter(year < 2001, country %in% named) %>%
+  group_by(country) %>%
+  summarise(
+    avg_rate = round(mean(cases_per_million, na.rm = TRUE), 0),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_rate))
+
+knitr::kable(
+  country_rates,
+  col.names = c("Country", "Avg cases per million (pre-2001)"),
+  format.args = list(big.mark = ",")
+)
+```
+
+```{r verdict-countries, results='asis'}
+all_above_1000 <- all(country_rates$avg_rate >= 1000)
+if (all_above_1000) {
+  cat("::: {.callout-tip}\n## PASS\nAll four countries averaged over 1,000 cases per million pre-2001.\n:::\n")
+} else {
+  below <- country_rates %>% filter(avg_rate < 1000)
+  cat("::: {.callout-warning}\n## CHECK\n",
+      paste(below$country, collapse = ", "),
+      "averaged below 1,000 per million.\n:::\n")
+}
+```
+
+## 6. Context: continental trend
+
+```{r trend-chart, fig.width=8, fig.height=4}
+ggplot(yearly, aes(x = year, y = total_cases)) +
+  geom_col(fill = ifelse(yearly$year %in% c(1981, 2016), "#E24A3F", "#ACCBF9")) +
+  geom_vline(xintercept = 2001, linewidth = 0.8, linetype = "dashed", alpha = 0.6) +
+  annotate("text", x = 2001, y = max(yearly$total_cases) * 0.95,
+           label = "Measles Initiative\n(2001)", hjust = -0.08,
+           size = 3, fontface = "italic") +
+  annotate("text", x = 1981, y = yearly$total_cases[yearly$year == 1981],
+           label = "1981: 1.4M", vjust = -0.5, size = 3, fontface = "bold") +
+  annotate("text", x = 2016, y = yearly$total_cases[yearly$year == 2016],
+           label = "2016: 35K", vjust = -0.5, hjust = -0.1, size = 3, fontface = "bold") +
+  scale_y_continuous(labels = label_comma()) +
+  scale_x_continuous(breaks = seq(1980, 2020, 5)) +
+  labs(
+    title = "Total reported measles cases across Africa, 1980-2023",
+    subtitle = "Red bars highlight the peak (1981) and trough (2016) years cited in the post",
+    x = NULL, y = "Total cases"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## Summary
+
+```{r summary-table}
+results <- data.frame(
+  Claim = c(
+    '"1.4 million cases in 1981"',
+    '"35,000 in 2016"',
+    '"A 97% drop"',
+    '"Cut cases by over 90%" (chart title)',
+    '"Malawi, Zambia, Niger, Kenya — thousands per million"'
+  ),
+  Actual = c(
+    comma(val_1981),
+    comma(val_2016),
+    paste0(pct_drop, "%"),
+    paste0(reduction, "%"),
+    paste(comma(country_rates$avg_rate), collapse = ", ")
+  ),
+  Result = c(
+    ifelse(val_1981 >= 1.35e6 & val_1981 < 1.45e6, "PASS", "CHECK"),
+    ifelse(val_2016 >= 34500 & val_2016 < 35500, "PASS", "CHECK"),
+    ifelse(pct_drop >= 96.5 & pct_drop < 97.5, "PASS", "CHECK"),
+    ifelse(reduction > 90, "PASS", "CHECK"),
+    ifelse(all_above_1000, "PASS", "CHECK")
+  )
+)
+
+knitr::kable(results, align = c("l", "r", "c"))
+```
+
+---
+
+*Report generated `r Sys.time()` from `data/africa_measles.csv`.*

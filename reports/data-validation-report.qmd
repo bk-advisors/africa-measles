@@ -1,0 +1,191 @@
+---
+title: "Data Validation Report"
+subtitle: "Cross-checking africa_measles.csv against WHO and World Bank source APIs"
+date: today
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    output-file: data-validation-report.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+library(dplyr)
+library(scales)
+```
+
+## Overview
+
+This report validates the dataset used in the [Africa Measles Heatmap](https://bk-advisors.github.io/africa-measles/) against its two original sources:
+
+| Column | Source | API |
+|--------|--------|-----|
+| `cases` | WHO Global Health Observatory | Indicator **WHS3_62** --- Measles reported cases |
+| `population` | World Bank Open Data | Indicator **SP.POP.TOTL** --- Population, total |
+| `cases_per_million` | Derived | `cases / population * 1,000,000` |
+
+Data was pre-fetched from both APIs using `R/fetch_validation_data.R` and cached locally. To refresh, re-run that script before rendering this report.
+
+```{r load-data}
+csv   <- read.csv("../data/africa_measles.csv")
+cache <- readRDS("../data/validation_cache.rds")
+
+cat("CSV rows:", nrow(csv), "\n")
+cat("Countries:", n_distinct(csv$country), "\n")
+cat("Year range:", min(csv$year), "-", max(csv$year), "\n")
+cat("API data fetched:", format(cache$fetched_at), "\n")
+```
+
+## 1. Measles cases --- WHO GHO API
+
+### The indicator issue
+
+The WHO GHO API hosts **six** measles-related indicators. During initial validation, indicator `WHS3_41` was used based on third-party documentation. This produced alarming discrepancies --- only 161 of 1,226 joined rows matched, and those were almost entirely zero-valued cells.
+
+Investigation revealed the problem: `WHS3_41` is a different measure entirely. Here is how the two indicators compare for a single data point:
+
+| Indicator | Description | Kenya 1983 value |
+|-----------|-------------|------------------|
+| `WHS3_41` | *(not reported case counts)* | **`r cache$wrong_sample$NumericValue[1]`** |
+| **`WHS3_62`** | **Measles --- number of reported cases** | **`r comma(cache$right_sample$NumericValue[1])`** |
+
+The CSV value for Kenya 1983 is **`r comma(csv$cases[csv$country_code == "KEN" & csv$year == 1983])`** --- matching `WHS3_62` exactly.
+
+### All WHO measles indicators
+
+```{r who-indicators}
+cache$indicators %>%
+  knitr::kable(col.names = c("Code", "Indicator Name"))
+```
+
+### Comparison: CSV vs WHO (WHS3_62)
+
+```{r compare-cases}
+cases_check <- csv %>%
+  select(country, country_code, year, csv_cases = cases) %>%
+  inner_join(cache$who, by = c("country_code", "year")) %>%
+  mutate(diff = csv_cases - who_cases)
+
+exact <- sum(cases_check$diff == 0)
+total <- nrow(cases_check)
+
+cat("WHO records available:", nrow(cache$who), "\n")
+cat("Joined rows:", total, "of", nrow(csv), "CSV rows\n")
+cat("Exact matches:", exact, "/", total, "\n")
+```
+
+```{r cases-verdict, results='asis'}
+if (exact == total) {
+  cat("::: {.callout-tip}\n## PASS\nEvery case count in the CSV matches the WHO source exactly.\n:::\n")
+} else {
+  mismatches <- cases_check %>% filter(diff != 0)
+  cat("::: {.callout-warning}\n## DISCREPANCIES\n", nrow(mismatches), "rows differ.\n:::\n")
+  mismatches %>%
+    select(country, year, csv_cases, who_cases, diff) %>%
+    head(20) %>%
+    knitr::kable()
+}
+```
+
+## 2. Population --- World Bank API
+
+```{r compare-pop}
+pop_check <- csv %>%
+  select(country, country_code, year, csv_pop = population) %>%
+  inner_join(cache$wb, by = c("country_code", "year")) %>%
+  mutate(diff = csv_pop - wb_pop)
+
+exact_p <- sum(pop_check$diff == 0)
+total_p <- nrow(pop_check)
+
+cat("World Bank records available:", nrow(cache$wb), "\n")
+cat("Joined rows:", total_p, "of", nrow(csv), "CSV rows\n")
+cat("Exact matches:", exact_p, "/", total_p, "\n")
+```
+
+```{r pop-verdict, results='asis'}
+if (exact_p == total_p) {
+  cat("::: {.callout-tip}\n## PASS\nEvery population figure in the CSV matches the World Bank source exactly.\n:::\n")
+} else {
+  pop_mis <- pop_check %>% filter(diff != 0)
+  cat("::: {.callout-warning}\n## DISCREPANCIES\n", nrow(pop_mis), "rows differ.\n:::\n")
+  pop_mis %>%
+    select(country, year, csv_pop, wb_pop, diff) %>%
+    head(20) %>%
+    knitr::kable()
+}
+```
+
+## 3. Derived column --- `cases_per_million`
+
+This column should equal `cases / population * 1,000,000`, rounded to one decimal place.
+
+```{r check-rate}
+csv <- csv %>%
+  mutate(
+    calc_rate = round(cases / population * 1e6, 1),
+    rate_diff = abs(cases_per_million - calc_rate)
+  )
+
+rate_ok <- sum(csv$rate_diff < 0.2)
+cat("Consistent (within rounding tolerance of 0.2):", rate_ok, "/", nrow(csv), "\n")
+```
+
+```{r rate-verdict, results='asis'}
+if (rate_ok == nrow(csv)) {
+  cat("::: {.callout-tip}\n## PASS\nAll rates are internally consistent with cases and population.\n:::\n")
+} else {
+  cat("::: {.callout-warning}\n## ISSUES\n:::\n")
+  csv %>% filter(rate_diff >= 0.2) %>%
+    select(country, year, cases, population, cases_per_million, calc_rate, rate_diff) %>%
+    head(10) %>%
+    knitr::kable()
+}
+```
+
+## 4. Coverage gaps
+
+```{r coverage, results='asis'}
+who_codes <- unique(cache$who$country_code)
+csv_codes <- unique(csv$country_code)
+
+in_who_not_csv <- setdiff(who_codes, csv_codes)
+
+if (length(in_who_not_csv) > 0) {
+  cat("African countries present in WHO data but excluded from the CSV:\n\n")
+  cat(paste0("**", paste(in_who_not_csv, collapse = "**, **"), "**\n\n"))
+  cat("The chart requires 15+ years of reporting; these were likely excluded for sparse data.\n")
+} else {
+  cat("All WHO African countries are represented in the CSV.\n")
+}
+```
+
+## 5. Summary
+
+```{r summary-table}
+results <- data.frame(
+  Check = c(
+    "Measles cases vs WHO (WHS3_62)",
+    "Population vs World Bank (SP.POP.TOTL)",
+    "Derived rate (cases_per_million)",
+    "All CSV rows joined to WHO",
+    "All CSV rows joined to World Bank"
+  ),
+  Result = c(
+    ifelse(exact == total, "PASS", "FAIL"),
+    ifelse(exact_p == total_p, "PASS", "FAIL"),
+    ifelse(rate_ok == nrow(csv), "PASS", "FAIL"),
+    ifelse(total == nrow(csv), "PASS", paste0(total, " of ", nrow(csv))),
+    ifelse(total_p == nrow(csv), "PASS", paste0(total_p, " of ", nrow(csv)))
+  )
+)
+
+knitr::kable(results, align = c("l", "c"))
+```
+
+---
+
+*Validation data fetched `r format(cache$fetched_at)` from the WHO GHO and World Bank APIs. Report rendered `r Sys.time()`.*

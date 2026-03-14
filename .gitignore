@@ -1,0 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+/.quarto/
+**/*.quarto_ipynb
+
+# Quarto rendering artifacts
+search.json
+site_libs/
+CLAUDE.html
+
+# Cached API data (re-fetch with R/fetch_validation_data.R)
+data/validation_cache.rds

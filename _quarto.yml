@@ -1,3 +1,5 @@
 project:
   type: website
   output-dir: .
+  render:
+    - interactive-africa-measles.qmd
