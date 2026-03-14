@@ -19,7 +19,7 @@ library(dplyr)
 library(ggiraph)
 library(scales)
 
-source("../../synthesized-lessons/_common/theme_bka.R")
+source("R/theme_bka.R")
 
 # ---- Load pre-processed data ----
 africa_measles <- read.csv("data/africa_measles.csv")
