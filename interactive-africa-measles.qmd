@@ -1,0 +1,139 @@
+---
+title: "Africa Measles Heatmap — Interactive"
+subtitle: "Hover over any tile to explore country, year, and case details"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    toc: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE)
+```
+
+```{r interactive-heatmap, fig.width=12, fig.height=14}
+library(ggplot2)
+library(dplyr)
+library(ggiraph)
+library(scales)
+
+source("../../synthesized-lessons/_common/theme_bka.R")
+
+# ---- Load pre-processed data ----
+africa_measles <- read.csv("data/africa_measles.csv")
+
+# ---- Sort countries by average pre-2001 case rate (highest at top) ----
+country_order <- africa_measles %>%
+  filter(year < 2001) %>%
+  group_by(country) %>%
+  summarise(avg_rate = mean(cases_per_million, na.rm = TRUE), .groups = "drop") %>%
+  arrange(avg_rate) %>%
+  pull(country)
+
+africa_measles <- africa_measles %>%
+  mutate(country = factor(country, levels = country_order))
+
+# ---- Build tooltip text (HTML) ----
+africa_measles <- africa_measles %>%
+  mutate(
+    tile_id = paste0(country, "_", year),
+    tooltip_text = paste0(
+      "<b>", country, "</b> (", year, ")<br>",
+      comma(cases), " reported cases<br>",
+      "<b>", comma(cases_per_million, accuracy = 1), "</b> per million pop."
+    )
+  )
+
+# ---- BKA multi-stop gradient ----
+measles_gradient <- c(
+  colorRampPalette(c("#ACCBF9", "#005CB9", "#83BD00", "#F8A623"))(15),
+  colorRampPalette(c("#F8A623", "#FA7650", "#E24A3F"))(5)
+)
+
+# ---- Build the interactive heatmap ----
+p <- ggplot(africa_measles, aes(x = year, y = country, fill = cases_per_million)) +
+  geom_tile_interactive(
+    aes(
+      tooltip = tooltip_text,
+      data_id = tile_id
+    ),
+    colour = "white", linewidth = 0.4,
+    width = 0.9, height = 0.9
+  ) +
+  scale_fill_gradientn(
+    colours = measles_gradient,
+    limits = c(0, 5000),
+    breaks = seq(0, 5000, by = 1000),
+    labels = c("0", "1K", "2K", "3K", "4K", "5K"),
+    na.value = "#F5F5F5",
+    name = "Reported cases per million population",
+    oob = scales::squish,
+    guide = guide_colourbar(
+      barwidth = 15, barheight = 0.6,
+      title.position = "top",
+      title.hjust = 0.5,
+      ticks = TRUE, nbin = 50
+    )
+  ) +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = seq(1980, 2020, by = 5)) +
+  geom_vline(xintercept = 2001, color = bka_colors$title_dark,
+             linewidth = 1.2, alpha = 0.8) +
+  annotate("text", label = "WHO/UNICEF\nMeasles Initiative",
+           x = 2001, y = length(country_order) + 0.5,
+           hjust = -0.05, vjust = 1,
+           size = 4, fontface = "bold", family = "Lato",
+           color = bka_colors$title_dark) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Mass immunization campaigns cut African measles cases by over 90%\nbut outbreaks persist where coverage gaps remain",
+    subtitle = "Reported measles cases per million population by country, 1980-2023  |  Hover over tiles for details",
+    x = NULL, y = NULL,
+    caption = paste0(
+      "Source: WHO Global Health Observatory (cases) & World Bank (population) | ",
+      "Countries with 15+ years of reporting shown\n",
+      "Visualization: BK Advisors \u2014 bk-advisors.github.io"
+    )
+  ) +
+  theme_bka() +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_blank(),
+    axis.text.y = element_text(size = 9, face = "bold", family = "Lato", hjust = 1),
+    axis.text.x = element_text(size = 8),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(size = 9, face = "bold",
+                                color = bka_colors$title_dark),
+    legend.text = element_text(size = 8, color = bka_colors$subtitle_gray),
+    plot.title = element_text(lineheight = 1.15),
+    plot.margin = margin(15, 15, 25, 15)
+  )
+
+# ---- Render as interactive widget ----
+girafe(
+  ggobj = p,
+  width_svg = 12,
+  height_svg = 14,
+  options = list(
+    opts_tooltip(
+      css = paste0(
+        "background-color:", bka_colors$title_dark, ";",
+        "color:white;",
+        "padding:8px 12px;",
+        "border-radius:4px;",
+        "font-family:Lato,Arial,sans-serif;",
+        "font-size:13px;",
+        "line-height:1.4;",
+        "box-shadow:2px 2px 6px rgba(0,0,0,0.3);"
+      ),
+      opacity = 0.95
+    ),
+    opts_hover(
+      css = "stroke:#242852;stroke-width:2px;cursor:pointer;"
+    ),
+    opts_sizing(rescale = TRUE, width = 1)
+  )
+)
+```
